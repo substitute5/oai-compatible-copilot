@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
 import type { HFModelItem, RetryConfig } from "./types";
 import { OpenAIFunctionToolDef } from "./openai/openaiTypes";
 
@@ -24,6 +26,13 @@ const networkErrorPatterns = [
 	"network error",
 	"NetworkError",
 ];
+
+export interface ImageInfo {
+	filePath?: string;
+	mimeType: string;
+	base64Data: string;
+	dataUrl?: string;
+}
 
 // Model ID parsing helper
 export interface ParsedModelId {
@@ -196,6 +205,184 @@ export function createDataUrl(dataPart: vscode.LanguageModelDataPart): string {
 	return `data:${dataPart.mimeType};base64,${base64Data}`;
 }
 
+export function getImageMimeTypeFromPath(filePath: string | undefined): string | undefined {
+	const lower = String(filePath || "").toLowerCase();
+	if (lower.endsWith(".png")) {
+		return "image/png";
+	}
+	if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+		return "image/jpeg";
+	}
+	if (lower.endsWith(".gif")) {
+		return "image/gif";
+	}
+	if (lower.endsWith(".webp")) {
+		return "image/webp";
+	}
+	return undefined;
+}
+
+function normalizeToolInput(input: unknown): unknown {
+	if (typeof input === "string") {
+		try {
+			const parsed = JSON.parse(input);
+			return parsed && typeof parsed === "object" ? parsed : {};
+		} catch {
+			return {};
+		}
+	}
+	return typeof input === "object" ? input : {};
+}
+
+function collectCandidateImagePaths(input: unknown, seen = new Set<object>()): string[] {
+	const out: string[] = [];
+	const visit = (value: unknown, keyHint?: string) => {
+		if (value === undefined || value === null) {
+			return;
+		}
+		if (typeof value === "string") {
+			const key = String(keyHint || "").toLowerCase();
+			if (/^(file|filepath|path|image|imagepath|uri|url|filename)$/.test(key) || /path|image|file|uri|url/.test(key)) {
+				const candidate = normalizeImagePathLikeString(value);
+				if (getImageMimeTypeFromPath(candidate)) {
+					out.push(candidate);
+				}
+			}
+			return;
+		}
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				visit(item, keyHint);
+			}
+			return;
+		}
+		if (typeof value === "object") {
+			if (seen.has(value)) {
+				return;
+			}
+			seen.add(value);
+			for (const [key, nested] of Object.entries(value)) {
+				visit(nested, key);
+			}
+		}
+	};
+	visit(normalizeToolInput(input), "");
+	return [...new Set(out)];
+}
+
+export function createDataUrlFromImageInfo(imageInfo: ImageInfo): string {
+	return imageInfo.dataUrl ?? `data:${imageInfo.mimeType};base64,${imageInfo.base64Data}`;
+}
+
+function normalizeImagePathLikeString(value: string): string {
+	let normalized = String(value || "").trim();
+	normalized = normalized.replace(/^["'`“”‘’「『《\[\(（<]+|["'`“”‘’」』》\]\)）>]+$/g, "");
+	normalized = normalized.replace(/[),.;，。；）]+$/g, "");
+	if (normalized.startsWith("file://")) {
+		try {
+			normalized = decodeURIComponent(new URL(normalized).pathname);
+			if (/^\/[a-zA-Z]:\//.test(normalized)) {
+				normalized = normalized.slice(1);
+			}
+			normalized = normalized.replace(/\//g, path.sep);
+		} catch {
+			/* ignore invalid file URLs */
+		}
+	}
+	return normalized;
+}
+
+function getWorkspaceRootPaths(): string[] {
+	const folders = vscode.workspace?.workspaceFolders;
+	if (!Array.isArray(folders)) {
+		return [];
+	}
+	return folders.map((folder) => folder?.uri?.fsPath).filter((fsPath): fsPath is string => typeof fsPath === "string" && !!fsPath.trim());
+}
+
+function resolveImagePathCandidates(filePath: string): string[] {
+	const normalized = normalizeImagePathLikeString(filePath);
+	if (!normalized) {
+		return [];
+	}
+	if (path.isAbsolute(normalized)) {
+		return [normalized];
+	}
+	const candidates: string[] = [];
+	for (const root of getWorkspaceRootPaths()) {
+		candidates.push(path.resolve(root, normalized));
+	}
+	candidates.push(path.resolve(normalized));
+	return [...new Set(candidates)];
+}
+
+function readImageInfoFromPathLikeString(value: string): ImageInfo | undefined {
+	for (const filePath of resolveImagePathCandidates(value)) {
+		const mimeType = getImageMimeTypeFromPath(filePath);
+		if (!mimeType || !isImageMimeType(mimeType) || !fs.existsSync(filePath)) {
+			continue;
+		}
+		const base64Data = fs.readFileSync(filePath).toString("base64");
+		return { filePath, mimeType, base64Data, dataUrl: `data:${mimeType};base64,${base64Data}` };
+	}
+	return undefined;
+}
+
+export function readImageInfosFromText(text: string): ImageInfo[] {
+	const source = String(text || "");
+	const candidates: string[] = [];
+	const quoted = /["'`“”‘’「『《\[\(（<]([^"'`“”‘’」』》\]\)）>]+?\.(?:png|jpe?g|gif|webp))["'`“”‘’」』》\]\)）>]?/gi;
+	let match: RegExpExecArray | null;
+	while ((match = quoted.exec(source)) !== null) {
+		candidates.push(match[1]);
+	}
+	const unquoted = /(?:file:\/\/[^\s"'`<>]+?\.(?:png|jpe?g|gif|webp)|[a-zA-Z]:[\\/][^\s"'`<>]+?\.(?:png|jpe?g|gif|webp)|\/[^\s"'`<>]+?\.(?:png|jpe?g|gif|webp)|(?:\.\.?[\\/])+[^\s"'`<>]+?\.(?:png|jpe?g|gif|webp)|[^\s"'`<>]+[\\/][^\s"'`<>]+?\.(?:png|jpe?g|gif|webp)|[^\s"'`<>]+?\.(?:png|jpe?g|gif|webp))/gi;
+	while ((match = unquoted.exec(source)) !== null) {
+		candidates.push(match[0]);
+	}
+
+	const out: ImageInfo[] = [];
+	const seen = new Set<string>();
+	for (const candidate of candidates) {
+		try {
+			const info = readImageInfoFromPathLikeString(candidate);
+			if (info?.filePath && !seen.has(info.filePath)) {
+				seen.add(info.filePath);
+				out.push(info);
+			}
+		} catch (error) {
+			logger.warn("text-image.read-failed", {
+				filePath: candidate,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+	return out;
+}
+
+function readImageInfosFromToolInput(input: unknown): ImageInfo[] {
+	const infos: ImageInfo[] = [];
+	for (const filePath of collectCandidateImagePaths(input)) {
+		try {
+			if (!fs.existsSync(filePath)) {
+				continue;
+			}
+			const mimeType = getImageMimeTypeFromPath(filePath);
+			if (!mimeType || !isImageMimeType(mimeType)) {
+				continue;
+			}
+			const base64Data = fs.readFileSync(filePath).toString("base64");
+			infos.push({ filePath, mimeType, base64Data, dataUrl: `data:${mimeType};base64,${base64Data}` });
+		} catch (error) {
+			logger.warn("tool-result.image.read-failed", {
+				filePath,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+	return infos;
+}
+
 /**
  * Type guard for LanguageModelToolResultPart-like values.
  * @param value Unknown value to test.
@@ -215,7 +402,15 @@ export function isToolResultPart(value: unknown): value is { callId: string; con
  * @param pr Tool result-like object with content array.
  */
 export function collectToolResultText(pr: { content?: ReadonlyArray<unknown> }): string {
+	return collectToolResultContent(pr).text;
+}
+
+export function collectToolResultContent(
+	pr: { content?: ReadonlyArray<unknown> },
+	toolInput?: unknown
+): { text: string; images: ImageInfo[] } {
 	let text = "";
+	const images: ImageInfo[] = [];
 	for (const c of pr.content ?? []) {
 		if (c instanceof vscode.LanguageModelTextPart) {
 			text += c.value;
@@ -223,6 +418,9 @@ export function collectToolResultText(pr: { content?: ReadonlyArray<unknown> }):
 			text += c;
 		} else if (c instanceof vscode.LanguageModelDataPart && c.mimeType === "cache_control") {
 			/* ignore */
+		} else if (c instanceof vscode.LanguageModelDataPart && isImageMimeType(c.mimeType)) {
+			const base64Data = Buffer.from(c.data).toString("base64");
+			images.push({ mimeType: c.mimeType, base64Data, dataUrl: `data:${c.mimeType};base64,${base64Data}` });
 		} else {
 			try {
 				text += JSON.stringify(c);
@@ -231,7 +429,19 @@ export function collectToolResultText(pr: { content?: ReadonlyArray<unknown> }):
 			}
 		}
 	}
-	return text;
+	if (images.length === 0 && toolInput) {
+		const fromFiles = readImageInfosFromToolInput(toolInput);
+		images.push(...fromFiles);
+		for (const image of fromFiles) {
+			if (image.filePath) {
+				text += `${text ? "\n" : ""}[OAICopilot attached image from tool input path: ${image.filePath}]`;
+			}
+		}
+	}
+	if (images.length === 0 && /vscode-chat-response-resource:\/\//.test(text)) {
+		text += `${text ? "\n" : ""}[OAICopilot note: the tool result contained a VS Code internal image resource URI but no transferable image bytes. If the original tool call included a local image path, OAICopilot will attach it automatically; otherwise attach the image directly.]`;
+	}
+	return { text, images };
 }
 
 /**
