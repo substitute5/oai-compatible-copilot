@@ -494,6 +494,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 			case "response.reasoning_text.delta":
 			case "response.reasoning_summary.delta":
 			case "response.reasoning_summary_text.delta":
+			case "response.reasoning_summary_part.added":
 			case "response.thinking.delta":
 			case "response.thinking_summary.delta":
 			case "response.thought.delta":
@@ -508,6 +509,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 			case "response.reasoning_text.done":
 			case "response.reasoning_summary.done":
 			case "response.reasoning_summary_text.done":
+			case "response.reasoning_summary_part.done":
 			case "response.thinking.done":
 			case "response.thinking_summary.done":
 			case "response.thought.done":
@@ -578,6 +580,26 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 			case "response.output_item.done": {
 				const item = event.item && typeof event.item === "object" ? (event.item as Record<string, unknown>) : null;
 				if (!item || item.type !== "function_call") {
+					const itemType = item && typeof item.type === "string" ? item.type : "";
+					if (itemType === "reasoning" || itemType === "thinking" || itemType === "thought") {
+						logger.debug("responses.output_item.reasoning", {
+							modelId: this._modelId,
+							eventType,
+							itemType,
+							itemKeys: Object.keys(item ?? {}),
+						});
+						this.processReasoningText({ ...event, item }, progress);
+						if (eventType === "response.output_item.done") {
+							this.reportEndThinking(progress);
+						}
+					} else {
+						logger.debug("responses.output_item.ignored", {
+							modelId: this._modelId,
+							eventType,
+							itemType,
+							itemKeys: item ? Object.keys(item) : [],
+						});
+					}
 					return;
 				}
 
@@ -676,16 +698,40 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 		}
 	}
 
-	private processReasoningText(
-		event: Record<string, unknown>,
-		progress: vscode.Progress<vscode.LanguageModelResponsePart2>
-	) {
-		const candidates = [
-			this.coerceText(event.delta),
-			this.coerceText(event.text),
-			this.coerceText((event as Record<string, unknown>).reasoning),
-			this.coerceText((event as Record<string, unknown>).summary),
-		].filter(Boolean);
+	private collectReasoningText(value: unknown, out: string[]): void {
+		if (value === undefined || value === null) {
+			return;
+		}
+		if (typeof value === "string") {
+			if (value) {
+				out.push(value);
+			}
+			return;
+		}
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				this.collectReasoningText(item, out);
+			}
+			return;
+		}
+		if (typeof value === "object") {
+			const obj = value as Record<string, unknown>;
+			for (const key of ["text", "thinking", "reasoning", "summary", "value", "delta", "part", "content"]) {
+				if (Object.prototype.hasOwnProperty.call(obj, key)) {
+					this.collectReasoningText(obj[key], out);
+				}
+			}
+		}
+	}
+
+	private processReasoningText(event: Record<string, unknown>, progress: vscode.Progress<vscode.LanguageModelResponsePart2>) {
+		const candidates: string[] = [];
+		this.collectReasoningText(event.delta, candidates);
+		this.collectReasoningText(event.text, candidates);
+		this.collectReasoningText(event.reasoning, candidates);
+		this.collectReasoningText(event.summary, candidates);
+		this.collectReasoningText(event.part, candidates);
+		this.collectReasoningText(event.item, candidates);
 
 		for (const chunk of candidates) {
 			if (this.looksLikeReasoningConfigValue(chunk)) {
