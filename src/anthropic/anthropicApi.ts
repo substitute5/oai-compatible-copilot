@@ -245,6 +245,9 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		um: HFModelItem | undefined,
 		options?: ProvideLanguageModelChatResponseOptions
 	): AnthropicRequestBody {
+		const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+			!!v && typeof v === "object" && !Array.isArray(v);
+
 		// Set max_tokens (required for Anthropic)
 		if (um?.max_tokens !== undefined) {
 			rb.max_tokens = um.max_tokens;
@@ -267,19 +270,31 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			}
 		}
 
-		// Add temperature
-		if (um?.temperature !== undefined && um.temperature !== null) {
+		// Add temperature unless explicitly omitted with the -1 sentinel.
+		if (um?.temperature !== undefined && um.temperature !== null && um.temperature !== -1) {
 			rb.temperature = um.temperature;
 		}
 
-		// Add top_p if configured
-		if (um?.top_p !== undefined && um.top_p !== null) {
+		// Add top_p unless explicitly omitted with the -1 sentinel.
+		if (um?.top_p !== undefined && um.top_p !== null && um.top_p !== -1) {
 			rb.top_p = um.top_p;
 		}
 
-		// Add top_k if configured
-		if (um?.top_k !== undefined) {
+		// Add top_k unless explicitly omitted with the -1 sentinel.
+		if (um?.top_k !== undefined && um.top_k !== -1) {
 			rb.top_k = um.top_k;
+		}
+
+		// Add Anthropic thinking config when explicitly requested.
+		const thinkingType = um?.thinking?.type;
+		const thinkingBudget = um?.thinking_budget;
+		if (thinkingType === "enabled") {
+			rb.thinking = {
+				type: "enabled",
+				...(thinkingBudget !== undefined ? { budget_tokens: thinkingBudget } : {}),
+			};
+		} else if (thinkingType === "disabled" || thinkingType === "adaptive") {
+			rb.thinking = { type: thinkingType };
 		}
 
 		// Add tools configuration
@@ -316,6 +331,11 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 				if (value !== undefined) {
 					if (key === "tools" && Array.isArray(value) && rb.tools) {
 						rb.tools = [...rb.tools, ...value];
+					} else if (isPlainObject(value) && isPlainObject((rb as unknown as Record<string, unknown>)[key])) {
+						(rb as unknown as Record<string, unknown>)[key] = {
+							...((rb as unknown as Record<string, unknown>)[key] as Record<string, unknown>),
+							...value,
+						};
 					} else {
 						(rb as unknown as Record<string, unknown>)[key] = value;
 					}

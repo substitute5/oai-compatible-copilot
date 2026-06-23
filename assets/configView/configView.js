@@ -744,13 +744,13 @@ function validateModelData(modelData) {
 	}
 	if (
 		modelData.temperature !== undefined &&
-		(isNaN(modelData.temperature) || modelData.temperature < 0 || modelData.temperature > 2)
+		(isNaN(modelData.temperature) || modelData.temperature < -1 || modelData.temperature > 2)
 	) {
-		showModelError("Temperature must be between 0 and 2.");
+		showModelError("Temperature must be between -1 and 2.");
 		return false;
 	}
-	if (modelData.top_p !== undefined && (isNaN(modelData.top_p) || modelData.top_p < 0 || modelData.top_p > 1)) {
-		showModelError("Top P must be between 0 and 1.");
+	if (modelData.top_p !== undefined && (isNaN(modelData.top_p) || modelData.top_p < -1 || modelData.top_p > 1)) {
+		showModelError("Top P must be between -1 and 1.");
 		return false;
 	}
 	if (modelData.delay !== undefined && (isNaN(modelData.delay) || modelData.delay < 0)) {

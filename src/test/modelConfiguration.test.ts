@@ -200,4 +200,30 @@ suite("modelConfiguration", () => {
 		assert.strictEqual(geminiBody.reasoning_effort, undefined);
 		assert.strictEqual(geminiBody.thinkingConfig, undefined);
 	});
+
+	test("omits Anthropic sampling parameters with -1 sentinel and merges thinking extras", () => {
+		const requestBody = new AnthropicApi("claude-opus-4-8").prepareRequestBody(
+			{ model: "claude-opus-4-8", messages: [], max_tokens: 1024, stream: true },
+			{
+				...deepSeekModel,
+				id: "claude-opus-4-8",
+				apiMode: "anthropic",
+				temperature: -1,
+				top_p: -1,
+				top_k: -1,
+				thinking: { type: "adaptive" },
+				extra: {
+					thinking: {
+						display: "summarized",
+					},
+				},
+			},
+			undefined
+		) as unknown as Record<string, unknown>;
+
+		assert.strictEqual(requestBody.temperature, undefined);
+		assert.strictEqual(requestBody.top_p, undefined);
+		assert.strictEqual(requestBody.top_k, undefined);
+		assert.deepStrictEqual(requestBody.thinking, { type: "adaptive", display: "summarized" });
+	});
 });

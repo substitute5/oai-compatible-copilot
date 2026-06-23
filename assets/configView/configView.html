@@ -248,21 +248,23 @@
 					<div class="row">
 						<div class="field">
 							<label for="modelTemperature">Temperature</label>
-							<div class="field-description">Sampling temperature (range: [0, 2]). Default is 0.</div>
+							<div class="field-description">
+								Sampling temperature (range: [0, 2]). Set to -1 to omit from request for Anthropic Opus 4.7+.
+							</div>
 							<input
 								id="modelTemperature"
 								type="number"
 								class="model-input"
 								placeholder="0"
-								min="0"
+								min="-1"
 								max="2"
 								step="0.01"
 							/>
 						</div>
 						<div class="field">
 							<label for="modelTopP">Top P</label>
-							<div class="field-description">Top-p sampling value (range: (0, 1]).</div>
-							<input id="modelTopP" type="number" class="model-input" placeholder="1" min="0" max="1" step="0.01" />
+							<div class="field-description">Top-p sampling value (range: (0, 1]). Set to -1 to omit.</div>
+							<input id="modelTopP" type="number" class="model-input" placeholder="1" min="-1" max="1" step="0.01" />
 						</div>
 						<div class="field">
 							<label for="modelDelay">Delay (ms)</label>
@@ -292,13 +294,13 @@
 								</div>
 								<div class="field">
 									<label for="modelTopK">Top K</label>
-									<div class="field-description">Top-k sampling value (range: [1, Infinity)).</div>
-									<input id="modelTopK" type="number" class="model-input" min="1" />
+									<div class="field-description">Top-k sampling value (range: [1, Infinity)). Set to -1 to omit.</div>
+									<input id="modelTopK" type="number" class="model-input" min="-1" />
 								</div>
 								<div class="field">
 									<label for="modelMinP">Min P</label>
-									<div class="field-description">Minimum probability threshold (range: [0, 1]).</div>
-									<input id="modelMinP" type="number" class="model-input" min="0" max="1" step="0.01" />
+									<div class="field-description">Minimum probability threshold (range: [0, 1]). Set to -1 to omit.</div>
+									<input id="modelMinP" type="number" class="model-input" min="-1" max="1" step="0.01" />
 								</div>
 							</div>
 							<div class="row">
@@ -319,8 +321,8 @@
 								</div>
 								<div class="field">
 									<label for="modelRepetitionPenalty">Repetition Penalty</label>
-									<div class="field-description">Repetition penalty (range: (0, 2]).</div>
-									<input id="modelRepetitionPenalty" type="number" class="model-input" min="0" step="0.01" />
+									<div class="field-description">Repetition penalty (range: (0, 2]). Set to -1 to omit.</div>
+									<input id="modelRepetitionPenalty" type="number" class="model-input" min="-1" step="0.01" />
 								</div>
 							</div>
 							<!-- Thinking Configuration -->
@@ -341,6 +343,7 @@
 										<option value=""></option>
 										<option value="enabled">Enabled</option>
 										<option value="disabled">Disabled</option>
+										<option value="adaptive">Adaptive</option>
 									</select>
 								</div>
 								<div class="field">

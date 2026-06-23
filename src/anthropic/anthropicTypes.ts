@@ -81,8 +81,8 @@ export interface AnthropicRequestBody {
 	};
 	service_tier?: "auto" | "standard_only";
 	thinking?: {
-		type: "enabled";
-		budget_tokens: number;
+		type: "enabled" | "disabled" | "adaptive";
+		budget_tokens?: number;
 	};
 	tools?: AnthropicToolDefinition[];
 	tool_choice?: AnthropicToolChoice;

@@ -213,9 +213,10 @@
 										"type": "string",
 										"enum": [
 											"enabled",
-											"disabled"
+											"disabled",
+											"adaptive"
 										],
-										"description": "Set to 'enabled' to enable thinking, 'disabled' to disable thinking"
+										"description": "Set to 'enabled' to enable thinking, 'disabled' to disable thinking, or 'adaptive' for Anthropic Opus 4.7+."
 									}
 								}
 							},
@@ -234,50 +235,50 @@
 							"temperature": {
 								"type": "number",
 								"default": 0,
-								"minimum": 0,
+								"minimum": -1,
 								"maximum": 2,
-								"description": "Sampling temperature (range: [0, 2]). Lower values make output more deterministic, higher values make it more creative. Default is 0."
+								"description": "Sampling temperature (range: [0, 2]). Set to -1 to omit from request. NOTE: Anthropic Opus 4.7+ does not support this parameter."
 							},
 							"top_p": {
 								"type": "number",
 								"default": 1,
-								"minimum": 0,
+								"minimum": -1,
 								"maximum": 1,
-								"description": "Top-p sampling value (range: (0, 1]). Not required."
+								"description": "Top-p sampling value (range: (0, 1]). Set to -1 to omit from request. NOTE: Anthropic Opus 4.7+ does not support this parameter."
 							},
 							"top_k": {
 								"type": "number",
 								"default": 50,
-								"minimum": 1,
-								"description": "Top-k sampling value (range: [1, Infinity)). Not required."
+								"minimum": -1,
+								"description": "Top-k sampling value (range: [1, Infinity)). Set to -1 to omit from request. NOTE: Anthropic Opus 4.7+ does not support this parameter."
 							},
 							"min_p": {
 								"type": "number",
 								"default": 0,
-								"minimum": 0,
+								"minimum": -1,
 								"maximum": 1,
-								"description": "Minimum probability threshold (range: [0, 1]). Not required."
+								"description": "Minimum probability threshold (range: [0, 1]). Set to -1 to omit from request."
 							},
 							"frequency_penalty": {
 								"type": "number",
 								"default": 0,
 								"minimum": -2,
 								"maximum": 2,
-								"description": "Frequency penalty (range: [-2, 2]). Not required."
+								"description": "Frequency penalty (range: [-2, 2]). Not required. Anthropic Messages API does not support this parameter."
 							},
 							"presence_penalty": {
 								"type": "number",
 								"default": 0,
 								"minimum": -2,
 								"maximum": 2,
-								"description": "Presence penalty (range: [-2, 2]). Not required."
+								"description": "Presence penalty (range: [-2, 2]). Not required. Anthropic Messages API does not support this parameter."
 							},
 							"repetition_penalty": {
 								"type": "number",
 								"default": 0,
-								"minimum": 0,
+								"minimum": -1,
 								"maximum": 2,
-								"description": "Repetition penalty (range: (0, 2]). Not required."
+								"description": "Repetition penalty (range: (0, 2]). Set to -1 to omit from request."
 							},
 							"reasoning": {
 								"type": "object",
