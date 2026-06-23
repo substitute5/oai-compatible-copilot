@@ -7,7 +7,7 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem } from "../types";
+import { CustomDataPartMimeTypes, type HFModelItem } from "../types";
 import { getConfiguredReasoningEffort, isReasoningEffortPickerEnabled } from "../modelConfiguration";
 import type { OpenAIToolCall } from "./openaiTypes";
 
@@ -62,16 +62,29 @@ export interface ResponsesReasoning {
 	summary: ResponsesContentPart[];
 	id: string;
 	status: "completed";
+	encrypted_content?: string;
+	[key: string]: unknown;
+}
+
+export interface ResponsesReasoningReplayItem {
+	type: "reasoning" | "thinking" | "thought";
+	id?: string;
+	status?: string;
+	summary?: ResponsesContentPart[];
+	encrypted_content?: string;
+	[key: string]: unknown;
 }
 
 export type ResponsesInputItem =
 	| ResponsesInputMessage
 	| ResponsesFunctionCall
 	| ResponsesFunctionCallOutput
-	| ResponsesReasoning;
+	| ResponsesReasoning
+	| ResponsesReasoningReplayItem;
 
 export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<string, unknown>> {
 	private _responseId: string | null = null;
+	private readonly _reportedReasoningReplayItemKeys = new Set<string>();
 
 	constructor(modelId: string) {
 		super(modelId);
@@ -95,10 +108,20 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 			const toolCalls: OpenAIToolCall[] = [];
 			const toolResults: { callId: string; content: string; images: ImageInfo[] }[] = [];
 			const thinkingParts: string[] = [];
+			const replayReasoningItems: ResponsesReasoningReplayItem[] = [];
 
 			for (const part of m.content ?? []) {
 				if (part instanceof vscode.LanguageModelTextPart) {
 					textParts.push(part.value);
+				} else if (
+					part instanceof vscode.LanguageModelDataPart &&
+					part.mimeType === CustomDataPartMimeTypes.ResponsesReasoningItem &&
+					modelConfig.includeReasoningInRequest
+				) {
+					const replayItem = this.parseReasoningReplayPart(part);
+					if (replayItem) {
+						replayReasoningItems.push(replayItem);
+					}
 				} else if (part instanceof vscode.LanguageModelDataPart && isImageMimeType(part.mimeType)) {
 					imageParts.push(part);
 				} else if (part instanceof vscode.LanguageModelToolCallPart) {
@@ -130,6 +153,10 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 
 			// assistant message (optional)
 			if (role === "assistant") {
+				for (const replayItem of replayReasoningItems) {
+					out.push(replayItem);
+				}
+
 				if (joinedText) {
 					out.push({
 						role: "assistant",
@@ -140,7 +167,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 					});
 				}
 
-				if (joinedThinking) {
+				if (joinedThinking && replayReasoningItems.length === 0) {
 					out.push({
 						summary: [{ type: "summary_text", text: joinedThinking }],
 						type: "reasoning",
@@ -322,7 +349,69 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 			}
 		}
 
+		if (um?.include_reasoning_in_request) {
+			const include = Array.isArray(rb.include)
+				? rb.include.filter((item) => typeof item === "string")
+				: typeof rb.include === "string"
+					? [rb.include]
+					: [];
+			if (!include.includes("reasoning.encrypted_content")) {
+				include.push("reasoning.encrypted_content");
+			}
+			rb.include = include;
+		}
+
 		return rb;
+	}
+
+	private isReasoningReplayItem(value: unknown): value is ResponsesReasoningReplayItem {
+		if (!value || typeof value !== "object" || Array.isArray(value)) {
+			return false;
+		}
+		const type = (value as Record<string, unknown>).type;
+		return type === "reasoning" || type === "thinking" || type === "thought";
+	}
+
+	private parseReasoningReplayPart(part: vscode.LanguageModelDataPart): ResponsesReasoningReplayItem | null {
+		try {
+			const decoded = new TextDecoder().decode(part.data);
+			const parsed = JSON.parse(decoded) as unknown;
+			return this.isReasoningReplayItem(parsed) ? parsed : null;
+		} catch (e) {
+			logger.warn("responses.reasoning_replay.parse.error", {
+				modelId: this._modelId,
+				error: e instanceof Error ? e.message : String(e),
+			});
+			return null;
+		}
+	}
+
+	private reportReasoningReplayItem(
+		item: ResponsesReasoningReplayItem,
+		progress: Progress<LanguageModelResponsePart2>
+	): void {
+		const itemId = typeof item.id === "string" ? item.id : "";
+		const key = itemId || JSON.stringify(item);
+		if (this._reportedReasoningReplayItemKeys.has(key)) {
+			return;
+		}
+		this._reportedReasoningReplayItemKeys.add(key);
+
+		try {
+			const bytes = new TextEncoder().encode(JSON.stringify(item));
+			progress.report(new vscode.LanguageModelDataPart(bytes, CustomDataPartMimeTypes.ResponsesReasoningItem));
+			logger.debug("responses.reasoning_replay.report", {
+				modelId: this._modelId,
+				itemType: item.type,
+				itemId,
+				hasEncryptedContent: typeof item.encrypted_content === "string" && item.encrypted_content.length > 0,
+			});
+		} catch (e) {
+			logger.warn("responses.reasoning_replay.report.error", {
+				modelId: this._modelId,
+				error: e instanceof Error ? e.message : String(e),
+			});
+		}
 	}
 
 	async processStreamingResponse(
@@ -331,6 +420,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 		token: CancellationToken
 	): Promise<void> {
 		this._responseId = null;
+		this._reportedReasoningReplayItemKeys.clear();
 		const modelId = this._modelId;
 		logger.debug("responses.stream.start", { modelId });
 		const reader = responseBody.getReader();
@@ -590,6 +680,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 						});
 						this.processReasoningText({ ...event, item }, progress);
 						if (eventType === "response.output_item.done") {
+							this.reportReasoningReplayItem(item as ResponsesReasoningReplayItem, progress);
 							this.reportEndThinking(progress);
 						}
 					} else {
@@ -659,6 +750,14 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 				// End of message - ensure thinking is ended and flush all tool calls
 				await this.flushToolCallBuffers(progress, false);
 				this.reportEndThinking(progress);
+				const responseOutput = (event.response as Record<string, unknown> | undefined)?.output;
+				if (Array.isArray(responseOutput)) {
+					for (const item of responseOutput) {
+						if (this.isReasoningReplayItem(item)) {
+							this.reportReasoningReplayItem(item, progress);
+						}
+					}
+				}
 				// Capture usage from the completed event
 				const usage = event.usage ?? (event.response as Record<string, unknown>)?.usage;
 				if (usage && typeof usage === "object") {

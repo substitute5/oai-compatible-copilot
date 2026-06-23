@@ -13,7 +13,7 @@ import { OllamaApi } from "../ollama/ollamaApi";
 import { OpenaiApi } from "../openai/openaiApi";
 import { OpenaiResponsesApi } from "../openai/openaiResponsesApi";
 import { prepareLanguageModelChatInformation } from "../provideModel";
-import type { HFModelItem } from "../types";
+import { CustomDataPartMimeTypes, type HFModelItem } from "../types";
 
 suite("modelConfiguration", () => {
 	const deepSeekModel: HFModelItem = {
@@ -132,6 +132,47 @@ suite("modelConfiguration", () => {
 		);
 
 		assert.deepStrictEqual(requestBody.reasoning, { effort: "max" });
+	});
+
+	test("requests encrypted reasoning content for OpenAI Responses replay", () => {
+		const requestBody = new OpenaiResponsesApi("gpt-5.5").prepareRequestBody(
+			{ model: "gpt-5.5", input: [], stream: true },
+			{
+				...deepSeekModel,
+				id: "gpt-5.5",
+				apiMode: "openai-responses",
+				include_reasoning_in_request: true,
+				extra: { include: ["file_search_call.results"] },
+			},
+			undefined
+		);
+
+		assert.deepStrictEqual(requestBody.include, ["file_search_call.results", "reasoning.encrypted_content"]);
+	});
+
+	test("replays raw Responses reasoning items before summary fallback", () => {
+		const api = new OpenaiResponsesApi("gpt-5.5");
+		const rawReasoningItem = {
+			type: "reasoning",
+			id: "rs_123",
+			status: "completed",
+			summary: [{ type: "summary_text", text: "visible summary" }],
+			encrypted_content: "encrypted-state",
+		};
+		const replayPart = new vscode.LanguageModelDataPart(
+			new TextEncoder().encode(JSON.stringify(rawReasoningItem)),
+			CustomDataPartMimeTypes.ResponsesReasoningItem
+		);
+		const message = {
+			role: vscode.LanguageModelChatMessageRole.Assistant,
+			content: [replayPart, new vscode.LanguageModelThinkingPart("legacy summary"), new vscode.LanguageModelTextPart("answer")],
+			name: undefined,
+		} as unknown as vscode.LanguageModelChatRequestMessage;
+
+		const converted = api.convertMessages([message], { includeReasoningInRequest: true });
+
+		assert.deepStrictEqual(converted[0], rawReasoningItem);
+		assert.strictEqual(converted.some((item) => item.type === "reasoning" && item !== converted[0]), false);
 	});
 
 	test("keeps the picker out of unsupported native API request bodies", () => {

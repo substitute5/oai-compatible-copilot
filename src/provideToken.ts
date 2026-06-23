@@ -3,6 +3,7 @@ import { LanguageModelChatRequestMessage, LanguageModelChatTool } from "vscode";
 import { tokenizerManager } from "./tokenizer/tokenizerManager";
 import { getImageDimensions } from "./tokenizer/imageUtils";
 import { createDataUrl } from "./utils";
+import { CustomDataPartMimeTypes } from "./types";
 
 /*
  * Each message comes with 3 tokens per message due to special characters
@@ -31,7 +32,12 @@ export async function countMessageTokens(
 				// Estimate tokens for image or data parts based on type
 				if (part.mimeType.startsWith("image/")) {
 					totalTokens += calculateImageTokenCost(createDataUrl(part));
-				} else if (part.mimeType === "cache_control") {
+				} else if (
+					part.mimeType === CustomDataPartMimeTypes.CacheControl ||
+					part.mimeType === CustomDataPartMimeTypes.ResponsesReasoningItem ||
+					part.mimeType === CustomDataPartMimeTypes.StatefulMarker ||
+					part.mimeType === CustomDataPartMimeTypes.Usage
+				) {
 					/* ignore */
 				} else {
 					// For other binary data, use a more conservative estimate
