@@ -362,17 +362,14 @@ export function readImageInfosFromText(text: string): ImageInfo[] {
 
 function readImageInfosFromToolInput(input: unknown): ImageInfo[] {
 	const infos: ImageInfo[] = [];
+	const seen = new Set<string>();
 	for (const filePath of collectCandidateImagePaths(input)) {
 		try {
-			if (!fs.existsSync(filePath)) {
-				continue;
+			const info = readImageInfoFromPathLikeString(filePath);
+			if (info?.filePath && !seen.has(info.filePath)) {
+				seen.add(info.filePath);
+				infos.push(info);
 			}
-			const mimeType = getImageMimeTypeFromPath(filePath);
-			if (!mimeType || !isImageMimeType(mimeType)) {
-				continue;
-			}
-			const base64Data = fs.readFileSync(filePath).toString("base64");
-			infos.push({ filePath, mimeType, base64Data, dataUrl: `data:${mimeType};base64,${base64Data}` });
 		} catch (error) {
 			logger.warn("tool-result.image.read-failed", {
 				filePath,
